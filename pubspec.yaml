@@ -30,8 +30,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  sqflite: ^2.3.3+1 # SQLite 데이터베이스
-  path: ^1.9.0 # 데이터베이스 경로 처리
+  sembast: ^3.6.0
+  sembast_web: ^2.0.0
   fl_chart: ^0.68.0 # 차트 시각화
   audioplayers: ^6.0.0 # 오디오 재생
   intl: ^0.19.0 # 날짜 포맷팅

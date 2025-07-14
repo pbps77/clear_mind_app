@@ -1,8 +1,8 @@
 // main.dart
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:sqflite/sqflite.dart';
-import 'package:path/path.dart';
+import 'package:sembast/sembast.dart';
+import 'package:sembast_web/sembast_web.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:intl/intl.dart';
@@ -15,7 +15,7 @@ import 'dart:async';
 
 /// 브레인 포그 기록을 위한 데이터 모델
 class BrainFogEntry {
-  final int? id;
+  int? id; // sembast에서는 int로 자동 생성되므로 선언
   final int intensity; // 1 (맑음) - 5 (심함)
   final String factors; // 쉼표로 구분된 영향 요인 (예: "수면 부족,스트레스")
   final DateTime date;
@@ -54,66 +54,48 @@ class BrainFogEntry {
 
 /// SQLite 데이터베이스 작업을 위한 헬퍼 클래스
 class DatabaseHelper {
-  static Database? _database;
-  static const String _tableName = 'brain_fog_entries';
+  static final DatabaseHelper _instance = DatabaseHelper._internal();
+  factory DatabaseHelper() => _instance;
+  DatabaseHelper._internal();
 
-  Future<Database> get database async {
-    if (_database != null) return _database!;
-    _database = await _initDatabase();
-    return _database!;
+  static Database? _db;
+  static final _store = intMapStoreFactory.store('brain_fog_entries');
+
+  Future<Database> get db async {
+    if (_db == null) {
+      final dbFactory = databaseFactoryWeb;
+      _db = await dbFactory.openDatabase('clear_mind.db');
+    }
+    return _db!;
   }
 
-  Future<Database> _initDatabase() async {
-    // 데이터베이스 경로를 가져옵니다.
-    String path = join(await getDatabasesPath(), 'clear_mind.db');
-    // 데이터베이스를 열고 테이블을 생성합니다.
-    return await openDatabase(
-      path,
-      version: 1,
-      onCreate: (db, version) async {
-        await db.execute('''
-          CREATE TABLE $_tableName(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            intensity INTEGER,
-            factors TEXT,
-            date TEXT
-          )
-        ''');
-      },
-    );
-  }
-
-  /// 새로운 브레인 포그 기록을 삽입합니다.
   Future<void> insertEntry(BrainFogEntry entry) async {
-    final db = await database;
-    await db.insert(
-      _tableName,
-      entry.toMap(),
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    final database = await db;
+    // id가 null이면 자동 생성, 있으면 upsert
+    if (entry.id == null) {
+      await _store.add(database, entry.toMap());
+    } else {
+      await _store.record(entry.id!).put(database, entry.toMap());
+    }
   }
 
-  /// 모든 브레인 포그 기록을 조회합니다.
   Future<List<BrainFogEntry>> getEntries() async {
-    final db = await database;
-    final List<Map<String, dynamic>> maps = await db.query(
-      _tableName,
-      orderBy: 'date DESC', // 최신 날짜부터 정렬
+    final database = await db;
+    final records = await _store.find(
+      database,
+      finder: Finder(sortOrders: [SortOrder('date', false)]),
     );
-
-    return List.generate(maps.length, (i) {
-      return BrainFogEntry.fromMap(maps[i]);
-    });
+    return records.map((snapshot) {
+      // sembast는 key가 int로 자동 생성됨
+      final map = Map<String, dynamic>.from(snapshot.value);
+      map['id'] = snapshot.key;
+      return BrainFogEntry.fromMap(map);
+    }).toList();
   }
 
-  /// 특정 기록을 삭제합니다.
   Future<void> deleteEntry(int id) async {
-    final db = await database;
-    await db.delete(
-      _tableName,
-      where: 'id = ?',
-      whereArgs: [id],
-    );
+    final database = await db;
+    await _store.record(id).delete(database);
   }
 }
 
@@ -336,7 +318,7 @@ class _MemoryGameState extends State<MemoryGame> {
   int _moves = 0; // 시도 횟수
 
   final List<String> _availableEmojis = [
-    '🍎', '🍌', '🍇', '🍓', '🍍', '🥝', '�', '🍑',
+    '🍎', '🍌', '🍇', '🍓', '🍍', '🥝', '🍑', '🍓',
     '🚗', '🚲', '🚂', '🚁', '🚀', '⛵', '🚤', '🚢',
     '🐶', '🐱', '🐭', '🐹', '🐰', '🦊', '🐻', '🐼',
     '⚽', '🏀', '🏈', '⚾', '🎾', '🏐', '🏉', '🎱',
@@ -396,7 +378,7 @@ class _MemoryGameState extends State<MemoryGame> {
       _cardMatched[_flippedIndex2] = true;
       _resetFlippedCards(); // 뒤집힌 카드 인덱스 초기화
       if (_cardMatched.every((element) => element)) {
-        _showGameCompleteDialog(context as BuildContext); // 모든 카드 매칭 시 게임 완료 다이얼로그 표시
+        _showGameCompleteDialog(context); // 모든 카드 매칭 시 게임 완료 다이얼로그 표시
       }
     } else {
       // 매칭 실패
@@ -1136,8 +1118,6 @@ class _RestMeditationScreenState extends State<RestMeditationScreen> {
 dependencies:
   flutter:
     sdk: flutter
-  sqflite: ^2.3.3+1 # SQLite 데이터베이스
-  path: ^1.9.0 # 데이터베이스 경로 처리
   fl_chart: ^0.68.0 # 차트 시각화
   audioplayers: ^6.0.0 # 오디오 재생
   intl: ^0.19.0 # 날짜 포맷팅
