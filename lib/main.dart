@@ -52,7 +52,7 @@ class BrainFogEntry {
 // 2. 서비스/데이터베이스 헬퍼 (Services/Database Helper)
 // -----------------------------------------------------------------------------
 
-/// SQLite 데이터베이스 작업을 위한 헬퍼 클래스
+/// Sembast 데이터베이스 작업을 위한 헬퍼 클래스
 class DatabaseHelper {
   static final DatabaseHelper _instance = DatabaseHelper._internal();
   factory DatabaseHelper() => _instance;
@@ -63,6 +63,7 @@ class DatabaseHelper {
 
   Future<Database> get db async {
     if (_db == null) {
+      // 웹 환경에서는 sembast_web 사용
       final dbFactory = databaseFactoryWeb;
       _db = await dbFactory.openDatabase('clear_mind.db');
     }
@@ -101,32 +102,53 @@ class DatabaseHelper {
 
 // -----------------------------------------------------------------------------
 // 3. 상태 관리 (State Management) - Provider
+
+
 // -----------------------------------------------------------------------------
 
 /// 브레인 포그 기록 상태를 관리하는 ChangeNotifier
 class BrainFogProvider extends ChangeNotifier {
   final DatabaseHelper _dbHelper = DatabaseHelper();
   List<BrainFogEntry> _entries = [];
+  bool _isLoading = true;
 
   List<BrainFogEntry> get entries => _entries;
+  bool get isLoading => _isLoading;
 
   BrainFogProvider() {
     _loadEntries();
   }
 
   Future<void> _loadEntries() async {
-    _entries = await _dbHelper.getEntries();
-    notifyListeners(); // 데이터가 로드되면 UI 업데이트
+    try {
+      _isLoading = true;
+      notifyListeners();
+      _entries = await _dbHelper.getEntries();
+    } catch (e) {
+      print('Error loading entries: $e');
+      _entries = [];
+    } finally {
+      _isLoading = false;
+      notifyListeners(); // 데이터가 로드되면 UI 업데이트
+    }
   }
 
   Future<void> addEntry(BrainFogEntry entry) async {
-    await _dbHelper.insertEntry(entry);
-    await _loadEntries(); // 데이터 추가 후 다시 로드하여 UI 업데이트
+    try {
+      await _dbHelper.insertEntry(entry);
+      await _loadEntries(); // 데이터 추가 후 다시 로드하여 UI 업데이트
+    } catch (e) {
+      print('Error adding entry: $e');
+    }
   }
 
   Future<void> removeEntry(int id) async {
-    await _dbHelper.deleteEntry(id);
-    await _loadEntries(); // 데이터 삭제 후 다시 로드하여 UI 업데이트
+    try {
+      await _dbHelper.deleteEntry(id);
+      await _loadEntries(); // 데이터 삭제 후 다시 로드하여 UI 업데이트
+    } catch (e) {
+      print('Error removing entry: $e');
+    }
   }
 }
 
@@ -135,7 +157,7 @@ class BrainFogProvider extends ChangeNotifier {
 // -----------------------------------------------------------------------------
 
 void main() {
-  WidgetsFlutterBinding.ensureInitialized(); // SQFlite 초기화에 필요
+  WidgetsFlutterBinding.ensureInitialized(); // Flutter 초기화에 필요
   runApp(
     ChangeNotifierProvider(
       create: (BuildContext context) => BrainFogProvider(), // 앱 전체에 BrainFogProvider 제공
@@ -154,7 +176,6 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         primarySwatch: Colors.blue,
         visualDensity: VisualDensity.adaptivePlatformDensity,
-        // fontFamily: 'Inter', // 기본 폰트를 사용하려면 이 줄을 주석 처리하거나 제거합니다.
         appBarTheme: const AppBarTheme(
           backgroundColor: Colors.blueAccent,
           foregroundColor: Colors.white,
@@ -619,7 +640,6 @@ class _BrainFogTrackerScreenState extends State<BrainFogTrackerScreen> {
                             _selectedFactors[key] = selected;
                           });
                         },
-                        // ignore: deprecated_member_use
                         selectedColor: Theme.of(context).colorScheme.secondary.withOpacity(0.7),
                         checkmarkColor: Colors.white,
                         labelStyle: TextStyle(
@@ -643,7 +663,6 @@ class _BrainFogTrackerScreenState extends State<BrainFogTrackerScreen> {
                       );
                       await brainFogProvider.addEntry(newEntry);
                       if (mounted) { // Ensure the widget is still mounted before showing SnackBar
-                        // ignore: use_build_context_synchronously
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(content: Text('기록이 저장되었습니다!')),
                         );
@@ -667,8 +686,16 @@ class _BrainFogTrackerScreenState extends State<BrainFogTrackerScreen> {
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 10),
+          // 로딩 중일 때 표시
+          if (brainFogProvider.isLoading)
+            const Card(
+              child: Padding(
+                padding: EdgeInsets.all(20.0),
+                child: Center(child: CircularProgressIndicator()),
+              ),
+            )
           // 기록이 있을 때만 그래프 표시
-          if (brainFogProvider.entries.isNotEmpty)
+          else if (brainFogProvider.entries.isNotEmpty)
             Card(
               margin: const EdgeInsets.only(bottom: 20),
               child: Padding(
@@ -743,66 +770,66 @@ class _BrainFogTrackerScreenState extends State<BrainFogTrackerScreen> {
               ),
             ),
           // 기록 목록
-          ListView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: brainFogProvider.entries.length,
-            itemBuilder: (BuildContext listContext, int index) { // BuildContext 이름을 listContext로 변경
-              final entry = brainFogProvider.entries[index];
-              return Card(
-                margin: const EdgeInsets.symmetric(vertical: 8.0),
-                child: ListTile(
-                  title: Text(
-                    '${DateFormat('yyyy년 MM월 dd일').format(entry.date)} - 강도: ${entry.intensity}',
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  subtitle: Text('요인: ${entry.factors.isEmpty ? '없음' : entry.factors}'),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.delete, color: Colors.redAccent),
-                    onPressed: () async {
-                      // 삭제 확인 다이얼로그
-                      final bool? confirmDelete = await showDialog<bool>(
-                        context: listContext, // listContext 사용
-                        builder: (BuildContext dialogContext) { // BuildContext 이름을 dialogContext로 변경
-                          return AlertDialog(
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            title: const Text('기록 삭제', textAlign: TextAlign.center),
-                            content: const Text('이 기록을 정말 삭제하시겠습니까?', textAlign: TextAlign.center),
-                            actions: <Widget>[
-                              TextButton(
-                                child: const Text('취소', style: TextStyle(color: Colors.grey)),
-                                onPressed: () {
-                                  Navigator.of(dialogContext).pop(false);
-                                },
+          if (!brainFogProvider.isLoading)
+            ListView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: brainFogProvider.entries.length,
+              itemBuilder: (BuildContext listContext, int index) { // BuildContext 이름을 listContext로 변경
+                final entry = brainFogProvider.entries[index];
+                return Card(
+                  margin: const EdgeInsets.symmetric(vertical: 8.0),
+                  child: ListTile(
+                    title: Text(
+                      '${DateFormat('yyyy년 MM월 dd일').format(entry.date)} - 강도: ${entry.intensity}',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    subtitle: Text('요인: ${entry.factors.isEmpty ? '없음' : entry.factors}'),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.delete, color: Colors.redAccent),
+                      onPressed: () async {
+                        // 삭제 확인 다이얼로그
+                        final bool? confirmDelete = await showDialog<bool>(
+                          context: listContext, // listContext 사용
+                          builder: (BuildContext dialogContext) { // BuildContext 이름을 dialogContext로 변경
+                            return AlertDialog(
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
                               ),
-                              TextButton(
-                                child: const Text('삭제', style: TextStyle(color: Colors.redAccent)),
-                                onPressed: () {
-                                  Navigator.of(dialogContext).pop(true);
-                                },
-                              ),
-                            ],
-                          );
-                        },
-                      );
+                              title: const Text('기록 삭제', textAlign: TextAlign.center),
+                              content: const Text('이 기록을 정말 삭제하시겠습니까?', textAlign: TextAlign.center),
+                              actions: <Widget>[
+                                TextButton(
+                                  child: const Text('취소', style: TextStyle(color: Colors.grey)),
+                                  onPressed: () {
+                                    Navigator.of(dialogContext).pop(false);
+                                  },
+                                ),
+                                TextButton(
+                                  child: const Text('삭제', style: TextStyle(color: Colors.redAccent)),
+                                  onPressed: () {
+                                    Navigator.of(dialogContext).pop(true);
+                                  },
+                                ),
+                              ],
+                            );
+                          },
+                        );
 
-                      if (confirmDelete == true) {
-                        await brainFogProvider.removeEntry(entry.id!);
-                        if (mounted) { // Ensure the widget is still mounted before showing SnackBar
-                          // ignore: use_build_context_synchronously
-                          ScaffoldMessenger.of(listContext).showSnackBar( // listContext 사용
-                            const SnackBar(content: Text('기록이 삭제되었습니다.')),
-                          );
+                        if (confirmDelete == true) {
+                          await brainFogProvider.removeEntry(entry.id!);
+                          if (mounted) { // Ensure the widget is still mounted before showing SnackBar
+                            ScaffoldMessenger.of(listContext).showSnackBar( // listContext 사용
+                              const SnackBar(content: Text('기록이 삭제되었습니다.')),
+                            );
+                          }
                         }
-                      }
-                    },
+                      },
+                    ),
                   ),
-                ),
-              );
-            },
-          ),
+                );
+              },
+            ),
         ],
       ),
     );
@@ -953,40 +980,53 @@ class _RestMeditationScreenState extends State<RestMeditationScreen> {
 
   /// 오디오 재생/일시정지 토글
   Future<void> _togglePlayPause(String audioPath) async {
-    if (_currentAudioPath != audioPath) {
-      // 다른 오디오를 선택한 경우
-      await _audioPlayer.stop(); // 현재 재생 중인 오디오 중지
-      await _audioPlayer.setSource(AssetSource(audioPath)); // 새 오디오 로드
-      _currentAudioPath = audioPath;
-      await _audioPlayer.resume(); // 재생 시작
-      if (mounted) {
-        setState(() {
-          _isPlaying = true;
-        });
+    try {
+      if (_currentAudioPath != audioPath) {
+        // 다른 오디오를 선택한 경우
+        await _audioPlayer.stop(); // 현재 재생 중인 오디오 중지
+        await _audioPlayer.setSource(AssetSource(audioPath)); // 새 오디오 로드
+        _currentAudioPath = audioPath;
+        await _audioPlayer.resume(); // 재생 시작
+        if (mounted) {
+          setState(() {
+            _isPlaying = true;
+          });
+        }
+      } else if (_isPlaying) {
+        // 현재 오디오가 재생 중이면 일시정지
+        await _audioPlayer.pause();
+        if (mounted) {
+          setState(() {
+            _isPlaying = false;
+          });
+        }
+      } else {
+        // 현재 오디오가 일시정지 상태면 재생
+        await _audioPlayer.resume();
+        if (mounted) {
+          setState(() {
+            _isPlaying = true;
+          });
+        }
       }
-    } else if (_isPlaying) {
-      // 현재 오디오가 재생 중이면 일시정지
-      await _audioPlayer.pause();
+    } catch (e) {
+      print('Audio playback error: $e');
       if (mounted) {
-        setState(() {
-          _isPlaying = false;
-        });
-      }
-    } else {
-      // 현재 오디오가 일시정지 상태면 재생
-      await _audioPlayer.resume();
-      if (mounted) {
-        setState(() {
-          _isPlaying = true;
-        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('오디오 재생 중 오류가 발생했습니다: $e')),
+        );
       }
     }
   }
 
   /// 오디오 재생 위치 변경
   Future<void> _seek(double value) async {
-    final position = Duration(seconds: value.toInt());
-    await _audioPlayer.seek(position);
+    try {
+      final position = Duration(seconds: value.toInt());
+      await _audioPlayer.seek(position);
+    } catch (e) {
+      print('Seek error: $e');
+    }
   }
 
   /// 시간 포맷 변환 (00:00)
@@ -1108,36 +1148,3 @@ class _RestMeditationScreenState extends State<RestMeditationScreen> {
     );
   }
 }
-
-// -----------------------------------------------------------------------------
-// 6. pubspec.yaml 설정 (중요!)
-// -----------------------------------------------------------------------------
-// 이 코드를 실행하려면 pubspec.yaml 파일에 다음 의존성을 추가해야 합니다.
-// 또한, assets/audio 폴더를 생성하고 mp3 파일을 넣어주세요.
-/*
-dependencies:
-  flutter:
-    sdk: flutter
-  fl_chart: ^0.68.0 # 차트 시각화
-  audioplayers: ^6.0.0 # 오디오 재생
-  intl: ^0.19.0 # 날짜 포맷팅
-  provider: ^6.1.2 # 상태 관리
-
-dev_dependencies:
-  flutter_test:
-    sdk: flutter
-  flutter_lints: ^3.0.0
-
-flutter:
-  uses-material-design: true
-  # 앱에서 사용할 assets (오디오 파일 등) 경로를 지정합니다.
-  assets:
-    - assets/audio/
-  # 기본 폰트를 사용하려면 아래 폰트 설정을 주석 처리하거나 제거합니다.
-  # fonts:
-  #   - family: Inter
-  #     fonts:
-  #       - asset: assets/fonts/Inter-Regular.ttf
-  #       - asset: assets/fonts/Inter-Bold.ttf
-  #         weight: 700
-*/
